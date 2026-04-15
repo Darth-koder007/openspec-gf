@@ -1,4 +1,8 @@
-## ADDED Requirements
+## Purpose
+
+Server API endpoint to fetch and serve user profile information including display name, full legal name, email, and avatar URL.
+
+## Requirements
 
 ### Requirement: Server exposes user profile endpoint
 
@@ -37,19 +41,24 @@ The user profile JSON response SHALL contain the following fields:
 - **WHEN** a user doesn't have an avatar URL set
 - **THEN** the response includes displayName, fullName, and email, with avatarUrl as null or omitted
 
-### Requirement: CORS support
+### Requirement: Cross-origin communication support
 
-The server SHALL enable CORS headers to allow cross-origin requests from the frontend application.
+The server SHALL enable cross-origin communication to support both development (CORS) and production (nginx reverse proxy) scenarios.
 
-#### Scenario: Preflight request
+#### Scenario: Development - CORS preflight request
 
-- **WHEN** the browser sends an OPTIONS preflight request
+- **WHEN** running in development mode and the browser sends an OPTIONS preflight request
 - **THEN** the server responds with appropriate CORS headers allowing the request
 
-#### Scenario: Cross-origin GET request
+#### Scenario: Development - Cross-origin GET request
 
-- **WHEN** the frontend makes a GET request from a different origin
+- **WHEN** running in development mode and the frontend makes a GET request from a different origin
 - **THEN** the server includes Access-Control-Allow-Origin header in the response
+
+#### Scenario: Production - Single-origin via reverse proxy
+
+- **WHEN** running in production with nginx reverse proxy
+- **THEN** requests to `/api/*` are proxied to the backend at the same origin, eliminating CORS requirements
 
 ### Requirement: Test data availability
 

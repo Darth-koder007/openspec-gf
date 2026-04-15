@@ -40,17 +40,22 @@ The web UI SHALL automatically fetch the user profile from the server when the p
 
 ### Requirement: Server connection
 
-The web UI SHALL connect to the backend server to fetch user profile data.
+The web UI SHALL connect to the backend server to fetch user profile data in both development and production environments.
 
-#### Scenario: Cross-origin request
+#### Scenario: Development - Cross-origin request with CORS
 
-- **WHEN** the frontend is served from a different domain than the backend
-- **THEN** the UI successfully makes cross-origin requests using CORS
+- **WHEN** running in development mode and the frontend is served from a different domain than the backend
+- **THEN** the UI successfully makes cross-origin requests using CORS to the configured backend URL
+
+#### Scenario: Production - Same-origin via nginx reverse proxy
+
+- **WHEN** running in production with nginx reverse proxy
+- **THEN** the UI makes requests to `/api/*` which are proxied to the backend at the same origin
 
 #### Scenario: API endpoint configuration
 
 - **WHEN** the UI needs to fetch user data
-- **THEN** it uses the configured server URL to construct the API endpoint
+- **THEN** it uses the environment-configured API base URL (e.g., `http://localhost:3000` in dev, `/api` in production)
 
 ### Requirement: Loading state
 

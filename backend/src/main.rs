@@ -21,6 +21,7 @@ fn create_app(db: DbConn) -> Router {
     Router::new()
         .route("/", get(|| async { "Kudos Backend" }))
         .route("/user/:email", get(handlers::get_user_profile))
+        .route("/kudos/:email", get(handlers::get_kudos))
         .layer(cors)
         .with_state(db)
 }
@@ -37,6 +38,10 @@ async fn main() {
     eprintln!("Seeding test users...");
     db::seed_test_users(&conn).expect("Failed to seed test users");
     eprintln!("Test users seeded successfully");
+
+    eprintln!("Seeding test kudos...");
+    db::seed_test_kudos(&conn).expect("Failed to seed test kudos");
+    eprintln!("Test kudos seeded successfully");
 
     let db = Arc::new(Mutex::new(conn));
 
@@ -104,6 +109,40 @@ mod tests {
     }
 
     #[test]
+    fn test_kudos_table_migration() {
+        let conn = db::init_database_with_path(":memory:").unwrap();
+
+        // Verify kudos table exists
+        let table_exists: bool = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='kudos'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+
+        assert!(table_exists);
+
+        // Verify schema has correct columns
+        let mut stmt = conn
+            .prepare("PRAGMA table_info(kudos)")
+            .unwrap();
+
+        let columns: Vec<String> = stmt
+            .query_map([], |row| row.get::<_, String>(1))
+            .unwrap()
+            .filter_map(Result::ok)
+            .collect();
+
+        assert!(columns.contains(&"id".to_string()));
+        assert!(columns.contains(&"sender_email".to_string()));
+        assert!(columns.contains(&"recipient_email".to_string()));
+        assert!(columns.contains(&"message".to_string()));
+        assert!(columns.contains(&"created_at".to_string()));
+        assert!(columns.contains(&"is_public".to_string()));
+    }
+
+    #[test]
     fn test_seed_test_users() {
         let conn = db::init_database_with_path(":memory:").unwrap();
         db::seed_test_users(&conn).unwrap();
@@ -140,6 +179,98 @@ mod tests {
             .unwrap();
 
         assert_eq!(count, 2);
+    }
+
+    #[test]
+    fn test_seed_test_kudos() {
+        let conn = db::init_database_with_path(":memory:").unwrap();
+        db::seed_test_users(&conn).unwrap();
+        db::seed_test_kudos(&conn).unwrap();
+
+        // Verify kudos exist
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM kudos", [], |row| row.get(0))
+            .unwrap();
+
+        assert_eq!(count, 3);
+
+        // Verify John has received kudos
+        let john_kudos_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM kudos WHERE recipient_email = ?1",
+                ["john@deliveryhero.com"],
+                |row| row.get(0),
+            )
+            .unwrap();
+
+        assert_eq!(john_kudos_count, 2);
+
+        // Verify Jane has received kudos
+        let jane_kudos_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM kudos WHERE recipient_email = ?1",
+                ["jane@deliveryhero.com"],
+                |row| row.get(0),
+            )
+            .unwrap();
+
+        assert_eq!(jane_kudos_count, 1);
+
+        // Verify kudos have required fields
+        let kudo: (String, String, String) = conn
+            .query_row(
+                "SELECT sender_email, recipient_email, message FROM kudos WHERE recipient_email = ?1 LIMIT 1",
+                ["john@deliveryhero.com"],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+
+        assert_eq!(kudo.0, "jane@deliveryhero.com");
+        assert_eq!(kudo.1, "john@deliveryhero.com");
+        assert!(!kudo.2.is_empty());
+    }
+
+    #[test]
+    fn test_get_kudos_by_recipient_success() {
+        let conn = db::init_database_with_path(":memory:").unwrap();
+        db::seed_test_users(&conn).unwrap();
+        db::seed_test_kudos(&conn).unwrap();
+
+        let kudos = db::get_kudos_by_recipient(&conn, "john@deliveryhero.com").unwrap();
+
+        assert_eq!(kudos.len(), 2);
+        // Verify ordering (newest first)
+        assert!(kudos[0].4 > kudos[1].4); // created_at comparison
+    }
+
+    #[test]
+    fn test_get_kudos_by_recipient_empty() {
+        let conn = db::init_database_with_path(":memory:").unwrap();
+        db::seed_test_users(&conn).unwrap();
+        db::seed_test_kudos(&conn).unwrap();
+
+        // User with no kudos
+        let kudos = db::get_kudos_by_recipient(&conn, "nobody@example.com").unwrap();
+
+        assert_eq!(kudos.len(), 0);
+    }
+
+    #[test]
+    fn test_get_kudos_by_recipient_fields() {
+        let conn = db::init_database_with_path(":memory:").unwrap();
+        db::seed_test_users(&conn).unwrap();
+        db::seed_test_kudos(&conn).unwrap();
+
+        let kudos = db::get_kudos_by_recipient(&conn, "john@deliveryhero.com").unwrap();
+
+        assert!(kudos.len() > 0);
+        let kudo = &kudos[0];
+        assert!(kudo.0 > 0); // id
+        assert_eq!(kudo.1, "jane@deliveryhero.com"); // sender_email
+        assert_eq!(kudo.2, "john@deliveryhero.com"); // recipient_email
+        assert!(!kudo.3.is_empty()); // message
+        assert!(kudo.4 > 0); // created_at
+        assert_eq!(kudo.5, 1); // is_public
     }
 
     #[tokio::test]
@@ -281,5 +412,98 @@ mod tests {
         // Verify CORS header is present
         let cors_header = response.headers().get(header::ACCESS_CONTROL_ALLOW_ORIGIN);
         assert!(cors_header.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_get_kudos_success() {
+        use axum::body::Body;
+        use axum::http::{Request, StatusCode};
+        use tower::ServiceExt;
+
+        let conn = db::init_database_with_path(":memory:").unwrap();
+        db::seed_test_users(&conn).unwrap();
+        db::seed_test_kudos(&conn).unwrap();
+        let db = Arc::new(Mutex::new(conn));
+
+        let app = create_app(db);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/kudos/john@deliveryhero.com")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let kudos: Vec<serde_json::Value> = serde_json::from_slice(&body).unwrap();
+
+        assert_eq!(kudos.len(), 2);
+        assert_eq!(kudos[0]["recipientEmail"], "john@deliveryhero.com");
+        assert_eq!(kudos[0]["senderEmail"], "jane@deliveryhero.com");
+    }
+
+    #[tokio::test]
+    async fn test_get_kudos_empty_array() {
+        use axum::body::Body;
+        use axum::http::{Request, StatusCode};
+        use tower::ServiceExt;
+
+        let conn = db::init_database_with_path(":memory:").unwrap();
+        db::seed_test_users(&conn).unwrap();
+        db::seed_test_kudos(&conn).unwrap();
+        let db = Arc::new(Mutex::new(conn));
+
+        let app = create_app(db);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/kudos/nobody@example.com")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let kudos: Vec<serde_json::Value> = serde_json::from_slice(&body).unwrap();
+
+        assert_eq!(kudos.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_get_kudos_invalid_email() {
+        use axum::body::Body;
+        use axum::http::{Request, StatusCode};
+        use tower::ServiceExt;
+
+        let conn = db::init_database_with_path(":memory:").unwrap();
+        db::seed_test_users(&conn).unwrap();
+        let db = Arc::new(Mutex::new(conn));
+
+        let app = create_app(db);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/kudos/invalid-email-format")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     }
 }

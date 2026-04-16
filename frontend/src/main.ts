@@ -1,5 +1,6 @@
 import './style.css';
 import './hello-world';
+import './kudos-stream';
 import { getEmailFromQuery, isValidEmail } from './auth';
 import { fetchUserProfile } from './services';
 import type { HelloWorld } from './hello-world';
@@ -36,11 +37,20 @@ export async function initApp(queryString: string): Promise<HelloWorld> {
 }
 
 // Initialize app on page load
-if (typeof window !== 'undefined') {
-  initApp(window.location.search).then((component) => {
-    const app = document.querySelector<HTMLDivElement>('#app');
-    if (app) {
-      app.appendChild(component);
-    }
-  });
+if (typeof window !== 'undefined' && document.querySelector('#app')) {
+  const app = document.querySelector<HTMLDivElement>('#app');
+
+  // Simple routing based on path
+  const path = window.location.pathname;
+
+  if (path === '/kudos' || path === '/kudos.html') {
+    // Render kudos stream
+    const kudosStream = document.createElement('kudos-stream');
+    app!.appendChild(kudosStream);
+  } else {
+    // Default: render hello-world
+    initApp(window.location.search).then((component) => {
+      app!.appendChild(component);
+    });
+  }
 }

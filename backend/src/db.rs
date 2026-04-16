@@ -2,7 +2,7 @@ use rusqlite::{Connection, Result};
 use std::env;
 use std::path::Path;
 
-const SCHEMA_VERSION: i32 = 1;
+const SCHEMA_VERSION: i32 = 2;
 
 pub fn get_database_path() -> String {
     env::var("DATABASE_PATH").unwrap_or_else(|_| "data/kudos.db".to_string())
@@ -51,11 +51,21 @@ fn run_migrations(conn: &Connection) -> Result<()> {
         set_schema_version(conn, 1)?;
     }
 
-    // Future migrations can be added here:
-    // if current_version < 2 {
-    //     conn.execute("ALTER TABLE users ADD COLUMN ...", [])?;
-    //     set_schema_version(conn, 2)?;
-    // }
+    // Migration 2: Create kudos table
+    if current_version < 2 {
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS kudos (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                sender_email TEXT NOT NULL,
+                recipient_email TEXT NOT NULL,
+                message TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                is_public INTEGER NOT NULL DEFAULT 1
+            )",
+            [],
+        )?;
+        set_schema_version(conn, 2)?;
+    }
 
     Ok(())
 }
@@ -103,6 +113,80 @@ pub fn seed_test_users(conn: &Connection) -> Result<()> {
     )?;
 
     Ok(())
+}
+
+pub fn seed_test_kudos(conn: &Connection) -> Result<()> {
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+
+    // Kudo from Jane to John
+    conn.execute(
+        "INSERT INTO kudos (sender_email, recipient_email, message, created_at, is_public) VALUES (?1, ?2, ?3, ?4, ?5)",
+        [
+            "jane@deliveryhero.com",
+            "john@deliveryhero.com",
+            "Great work on the presentation!",
+            &(now - 86400).to_string(), // 1 day ago
+            "1",
+        ],
+    )?;
+
+    // Kudo from John to Jane
+    conn.execute(
+        "INSERT INTO kudos (sender_email, recipient_email, message, created_at, is_public) VALUES (?1, ?2, ?3, ?4, ?5)",
+        [
+            "john@deliveryhero.com",
+            "jane@deliveryhero.com",
+            "Thanks for your help with the project!",
+            &(now - 172800).to_string(), // 2 days ago
+            "1",
+        ],
+    )?;
+
+    // Another kudo from Jane to John
+    conn.execute(
+        "INSERT INTO kudos (sender_email, recipient_email, message, created_at, is_public) VALUES (?1, ?2, ?3, ?4, ?5)",
+        [
+            "jane@deliveryhero.com",
+            "john@deliveryhero.com",
+            "Excellent debugging skills!",
+            &(now - 259200).to_string(), // 3 days ago
+            "1",
+        ],
+    )?;
+
+    Ok(())
+}
+
+pub fn get_kudos_by_recipient(conn: &Connection, email: &str) -> Result<Vec<(i64, String, String, String, i64, i32)>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, sender_email, recipient_email, message, created_at, is_public
+         FROM kudos
+         WHERE recipient_email = ?1
+         ORDER BY created_at DESC"
+    )?;
+
+    let kudos_iter = stmt.query_map([email], |row| {
+        Ok((
+            row.get(0)?,  // id
+            row.get(1)?,  // sender_email
+            row.get(2)?,  // recipient_email
+            row.get(3)?,  // message
+            row.get(4)?,  // created_at
+            row.get(5)?,  // is_public
+        ))
+    })?;
+
+    let mut kudos = Vec::new();
+    for kudo in kudos_iter {
+        kudos.push(kudo?);
+    }
+
+    Ok(kudos)
 }
 
 pub fn get_user_by_email(conn: &Connection, email: &str) -> Result<Option<(String, String, String, Option<String>)>> {

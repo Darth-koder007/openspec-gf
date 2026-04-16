@@ -11,6 +11,7 @@
   },
   "devDependencies": {
     "@open-wc/testing": "^4.0.0",
+    "happy-dom": "^20.9.0",
     "jsdom": "^28.1.0",
     "typescript": "~6.0.2",
     "vite": "^8.0.4",
